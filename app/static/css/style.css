@@ -10,8 +10,28 @@ body {
     margin: 0 auto;
 }
 
+.card {
+    background: #ffffff;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    margin-bottom: 20px;
+}
+
+.hidden {
+    display: none;
+}
+
 .sync-section {
-    margin: 20px 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+}
+
+.status-row {
+    flex: 1;
+    min-width: 220px;
 }
 
 button {
@@ -27,7 +47,56 @@ button:hover {
     background: #0056b3;
 }
 
-#plot {
+input {
     width: 100%;
-    height: 600px;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    margin-bottom: 12px;
+}
+
+.error {
+    color: #c0392b;
+    margin-top: 8px;
+}
+
+.error-card {
+    background: #ffe6e6;
+    color: #a94442;
+    padding: 14px;
+    border-radius: 8px;
+    white-space: pre-wrap;
+    margin-bottom: 20px;
+}
+
+.toast {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    padding: 14px 18px;
+    border-radius: 8px;
+    color: white;
+    animation: fadein 0.3s ease;
+}
+
+.toast.success {
+    background: #2ecc71;
+}
+
+.toast.error {
+    background: #e74c3c;
+}
+
+.toast.info {
+    background: #3498db;
+}
+
+@keyframes fadein {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.chart {
+    width: 100%;
+    min-height: 600px;
 }

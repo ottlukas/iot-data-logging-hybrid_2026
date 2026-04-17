@@ -1,52 +1,95 @@
-import uvicorn
-from fastapi import FastAPI, Depends, HTTPException, status, Request
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
-from contextlib import asynccontextmanager
-import asyncio
+import json
 import logging
+import time
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
+
+import uvicorn
+from fastapi import FastAPI, Depends, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 import jinja2
 
-from app.models import SensorReading, User
-from app.storage import append_to_tsfile, clear_tsfile
-from app.sync import SyncManager
+from app.auth import auth_router, get_current_user, get_current_user_from_token
+from app.buffer import BufferStore
 from app.dashboard import router as dashboard_router
-from app.auth import get_user, oauth2_scheme, fake_users_db
+from app.models import SensorReading, User
 from app.config import settings
+from app.sync import SyncManager
+
+logging.basicConfig(level=logging.INFO)
 
 templates = jinja2.Environment(
     loader=jinja2.FileSystemLoader(str(Path(__file__).parent / "static")),
     autoescape=jinja2.select_autoescape(["html", "xml"]),
 )
 
-logging.basicConfig(level=logging.INFO)
+buffer_store = BufferStore()
+
+def get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+async def rate_limit(request: Request):
+    ip = get_client_ip(request)
+    if not hasattr(request.app.state, "rate_limits"):
+        request.app.state.rate_limits = {}
+    bucket = request.app.state.rate_limits.setdefault(ip, {"count": 0, "expires": time.time() + settings.SYNC_RATE_WINDOW})
+    now = time.time()
+    if now >= bucket["expires"]:
+        bucket["count"] = 0
+        bucket["expires"] = now + settings.SYNC_RATE_WINDOW
+    if bucket["count"] >= settings.SYNC_RATE_LIMIT:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many sync requests")
+    bucket["count"] += 1
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.sync_manager = SyncManager()
-    app.state.sync_task = asyncio.create_task(
-        app.state.sync_manager.periodic_sync()
-    )
+    app.state.rate_limits = {}
+    app.state.sync_task = asyncio.create_task(app.state.sync_manager.periodic_sync())
     yield
     app.state.sync_task.cancel()
-    await app.state.sync_manager.trigger_sync()
     await app.state.sync_manager.close()
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.include_router(auth_router)
 app.include_router(dashboard_router)
 
 @app.post("/ingest")
-async def ingest_data(reading: SensorReading, user: User = Depends(get_user)):
-    await append_to_tsfile(reading)
-    await app.state.sync_manager.add_to_batch(reading)
+async def ingest_data(reading: SensorReading, user: User = Depends(get_current_user)):
+    await buffer_store.append_reading(reading)
     return {"status": "accepted"}
 
 @app.post("/sync")
-async def sync_to_iotdb(user: User = Depends(get_user)):
-    await app.state.sync_manager.trigger_sync()
-    return {"status": "sync initiated"}
+async def sync_to_iotdb(request: Request, user: User = Depends(get_current_user), _: None = Depends(rate_limit)):
+    job_id = await app.state.sync_manager.trigger_sync()
+    return {"status": "queued", "job_id": job_id}
+
+@app.get("/sync/status/{job_id}")
+async def sync_status(request: Request, job_id: str, token: str = ""):
+    get_current_user_from_token(token)
+
+    async def event_generator():
+        while True:
+            if await request.is_disconnected():
+                break
+            status_data = app.state.sync_manager.get_job_status(job_id)
+            if status_data is None:
+                yield "data: {}\n\n"
+                break
+            yield f"data: {json.dumps(status_data)}\n\n"
+            if status_data.get("status") in {"completed", "failed"}:
+                break
+            await asyncio.sleep(1.0)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/health")
 async def health_check():

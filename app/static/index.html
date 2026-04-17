@@ -10,11 +10,30 @@
 <body>
     <div class="app">
         <h1>Hybrid IoT Dashboard</h1>
-        <div class="sync-section">
-            <button id="sync-button">Sync to IoTDB</button>
-            <p id="sync-status">Synced: 0 records</p>
+        <div id="login-panel" class="card">
+            <h2>Login</h2>
+            <label>Username</label>
+            <input id="username" type="text" value="operator" />
+            <label>Password</label>
+            <input id="password" type="password" value="operator" />
+            <button id="login-button">Sign In</button>
+            <p id="login-error" class="error"></p>
         </div>
-        <div id="plot"></div>
+
+        <div id="dashboard-panel" class="hidden">
+            <div class="sync-section card">
+                <button id="sync-button">Sync to IoTDB</button>
+                <button id="retry-button">Retry Last Sync</button>
+                <div class="status-row">
+                    <span id="sync-status">No sync started</span>
+                    <span id="sync-progress"></span>
+                </div>
+            </div>
+
+            <div id="toast" class="toast hidden"></div>
+            <div id="error-log" class="error-card hidden"></div>
+            <div id="plot" class="chart"></div>
+        </div>
     </div>
     <script src="/static/js/script.js"></script>
 </body>

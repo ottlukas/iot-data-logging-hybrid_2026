@@ -3,12 +3,17 @@ import random
 import requests
 from datetime import datetime
 
-# Configuration
-FASTAPI_URL = "http://localhost:8000/ingest"
-HEADERS = {
-    "Content-Type": "application/json",
-    "Authorization": "Bearer operator"  # Use one of the valid tokens: "operator", "supervisor", or "admin"
-}
+FASTAPI_URL = "http://localhost:8000"
+
+
+def fetch_access_token(username: str, password: str) -> str:
+    response = requests.post(
+        f"{FASTAPI_URL}/token",
+        data={"username": username, "password": password},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    response.raise_for_status()
+    return response.json()["access_token"]
 
 
 def generate_random_reading(device_id: str = "line1"):
@@ -23,6 +28,7 @@ def generate_random_reading(device_id: str = "line1"):
 
 
 def ingest_sensor_data(
+    token: str,
     device_id: str = "line1",
     timestamp: str = None,
     temperature: float = 22.5,
@@ -42,13 +48,15 @@ def ingest_sensor_data(
         "electronic_signature": electronic_signature,
     }
 
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+    }
+
     try:
-        response = requests.post(FASTAPI_URL, json=data, headers=HEADERS)
-        print(f"✅ Success! Status code: {response.status_code}")
-        try:
-            print(f"Response: {response.json()}")
-        except ValueError:
-            print("Response contained no JSON body.")
+        response = requests.post(f"{FASTAPI_URL}/ingest", json=data, headers=headers)
+        print(f"✅ Status code: {response.status_code}")
+        print(response.json())
     except requests.exceptions.RequestException as e:
         print(f"❌ Failed to send data: {e}")
 
@@ -59,14 +67,19 @@ def main():
     parser.add_argument("--count", type=int, default=1, help="Number of readings to send when using --random.")
     parser.add_argument("--device-id", default="line1", help="Device ID to send.")
     parser.add_argument("--signature", default="operator1", help="Electronic signature value.")
+    parser.add_argument("--username", default="operator", help="Login username for API authentication.")
+    parser.add_argument("--password", default="operator", help="Login password for API authentication.")
     args = parser.parse_args()
+
+    token = fetch_access_token(args.username, args.password)
 
     if args.random:
         for _ in range(args.count):
             reading = generate_random_reading(device_id=args.device_id)
-            ingest_sensor_data(**reading)
+            ingest_sensor_data(token, **reading)
     else:
         ingest_sensor_data(
+            token,
             device_id=args.device_id,
             electronic_signature=args.signature,
         )

@@ -1,98 +1,110 @@
-import logging
 import asyncio
-from typing import List
-try:
-    from iotdb.Session import Session
-except ImportError:
-    Session = None
-from app.models import SensorReading
+import json
+import logging
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+from app.buffer import BufferStore
 from app.config import settings
+from app.iotdb_client import IoTDBClient
+from app.models import SensorReading
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class SyncJob:
+    job_id: str
+    status: str = "queued"
+    total_records: int = 0
+    processed_records: int = 0
+    progress: float = 0.0
+    errors: List[str] = field(default_factory=list)
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
 
 class SyncManager:
-    def __init__(self):
-        self.batch: List[SensorReading] = []
-        self.sync_failures = 0
-        self.sync_success = 0
-        if Session is None:
-            logging.warning("IoTDB not available - sync will be disabled")
-            self.session = None
-        else:
-            try:
-                self.session = Session(
-                    settings.IOTDB_HOST,
-                    settings.IOTDB_PORT,
-                    settings.IOTDB_USER,
-                    settings.IOTDB_PASSWORD
-                )
-                self.session.open()
-                logging.info("Connected to IoTDB")
-            except Exception as e:
-                logging.warning(f"Failed to connect to IoTDB: {e} - sync will be disabled")
-                self.session = None
+    def __init__(self, buffer_store: BufferStore = None, iotdb_client: IoTDBClient = None):
+        self.buffer_store = buffer_store or BufferStore()
+        self.iotdb_client = iotdb_client or IoTDBClient()
+        self.jobs: Dict[str, SyncJob] = {}
+        self._lock = asyncio.Lock()
 
-    async def add_to_batch(self, reading: SensorReading):
-        self.batch.append(reading)
-        if len(self.batch) >= settings.BATCH_SIZE:
-            await self.trigger_sync()
+    async def trigger_sync(self) -> str:
+        async with self._lock:
+            job_id = str(uuid.uuid4())
+            self.jobs[job_id] = SyncJob(job_id=job_id)
+            asyncio.create_task(self._run_sync_job(job_id))
+            return job_id
 
-    async def trigger_sync(self):
-        if not self.batch:
-            return
-        batch = self.batch.copy()
-        self.batch.clear()
+    async def _run_sync_job(self, job_id: str):
+        job = self.jobs[job_id]
+        job.status = "started"
+        job.started_at = asyncio.get_event_loop().time().__str__()
+
         try:
-            success = await self.sync_batch_to_cloud(batch)
-            if success:
-                self.sync_success += 1
+            total = await self.buffer_store.total_unprocessed()
+            job.total_records = total
+            if total == 0:
+                job.status = "completed"
+                job.progress = 100.0
+                job.finished_at = asyncio.get_event_loop().time().__str__()
+                return
+
+            await self.iotdb_client.connect()
+            index = await self.buffer_store.get_index()
+            path = self.buffer_store.buffer_path
+            offset = index.get(path.name, 0)
+            if offset >= 0:
+                async for batch in self.buffer_store.read_batches(path, offset, settings.BATCH_SIZE):
+                    try:
+                        await self.iotdb_client.write_batch(batch)
+                        offset += len(batch)
+                        job.processed_records += len(batch)
+                        job.progress = min(100.0, (job.processed_records / total) * 100)
+                        await self.buffer_store.update_index(path, offset)
+                    except Exception as sync_error:
+                        job.errors.append(str(sync_error))
+                        raise
+
+            if await self.buffer_store.count_unprocessed_lines(path, offset) == 0:
+                await self.buffer_store.archive_file(path)
+                job.status = "completed"
+                job.progress = 100.0
             else:
-                self.sync_failures += 1
-                self.batch.extend(batch)
-        except Exception as e:
-            logging.error(f"Sync failed: {e}")
-            self.sync_failures += 1
-            self.batch.extend(batch)
+                job.status = "failed"
+                job.errors.append("Sync ended without archiving buffer file")
+        except Exception as exc:
+            job.status = "failed"
+            job.errors.append(str(exc))
+            logger.exception("Sync job %s failed", job_id)
+        finally:
+            try:
+                await self.iotdb_client.close()
+            except Exception:
+                pass
+            job.finished_at = asyncio.get_event_loop().time().__str__()
 
-    async def sync_batch_to_cloud(self, batch: List[SensorReading]):
-        if self.session is None:
-            logging.warning("IoTDB not available - skipping sync")
-            return False
-        
-        storage_group = "root.pharma"
-        self.session.set_storage_group(storage_group)
-
-        paths = []
-        values = []
-        timestamps = []
-
-        for reading in batch:
-            device_path = f"{storage_group}.{reading.device_id}"
-            timestamp = reading.timestamp.isoformat()
-
-            paths.extend([
-                f"{device_path}.temperature",
-                f"{device_path}.humidity",
-                f"{device_path}.pressure",
-            ])
-            values.extend([
-                reading.temperature,
-                reading.humidity,
-                reading.pressure,
-            ])
-            timestamps.append(timestamp)
-
-        self.session.insert_records(
-            timestamps,
-            [paths] * len(batch),
-            [values] * len(batch)
-        )
-        return True
+    def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        job = self.jobs.get(job_id)
+        if not job:
+            return None
+        return {
+            "job_id": job.job_id,
+            "status": job.status,
+            "total_records": job.total_records,
+            "processed_records": job.processed_records,
+            "progress": round(job.progress, 1),
+            "errors": job.errors,
+            "started_at": job.started_at,
+            "finished_at": job.finished_at,
+        }
 
     async def close(self):
-        if self.session is not None:
-            self.session.close()
-    
+        await self.iotdb_client.close()
+
     async def periodic_sync(self):
-        """Periodic sync task that runs in the background."""
         try:
             while True:
                 await asyncio.sleep(settings.SYNC_INTERVAL)
