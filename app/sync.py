@@ -1,6 +1,10 @@
 import logging
+import asyncio
 from typing import List
-from iotdb.Session import Session
+try:
+    from iotdb.Session import Session
+except ImportError:
+    Session = None
 from app.models import SensorReading
 from app.config import settings
 
@@ -9,13 +13,22 @@ class SyncManager:
         self.batch: List[SensorReading] = []
         self.sync_failures = 0
         self.sync_success = 0
-        self.session = Session(
-            settings.IOTDB_HOST,
-            settings.IOTDB_PORT,
-            settings.IOTDB_USER,
-            settings.IOTDB_PASSWORD
-        )
-        self.session.open()
+        if Session is None:
+            logging.warning("IoTDB not available - sync will be disabled")
+            self.session = None
+        else:
+            try:
+                self.session = Session(
+                    settings.IOTDB_HOST,
+                    settings.IOTDB_PORT,
+                    settings.IOTDB_USER,
+                    settings.IOTDB_PASSWORD
+                )
+                self.session.open()
+                logging.info("Connected to IoTDB")
+            except Exception as e:
+                logging.warning(f"Failed to connect to IoTDB: {e} - sync will be disabled")
+                self.session = None
 
     async def add_to_batch(self, reading: SensorReading):
         self.batch.append(reading)
@@ -40,6 +53,10 @@ class SyncManager:
             self.batch.extend(batch)
 
     async def sync_batch_to_cloud(self, batch: List[SensorReading]):
+        if self.session is None:
+            logging.warning("IoTDB not available - skipping sync")
+            return False
+        
         storage_group = "root.pharma"
         self.session.set_storage_group(storage_group)
 
@@ -71,4 +88,14 @@ class SyncManager:
         return True
 
     async def close(self):
-        self.session.close()
+        if self.session is not None:
+            self.session.close()
+    
+    async def periodic_sync(self):
+        """Periodic sync task that runs in the background."""
+        try:
+            while True:
+                await asyncio.sleep(settings.SYNC_INTERVAL)
+                await self.trigger_sync()
+        except asyncio.CancelledError:
+            pass

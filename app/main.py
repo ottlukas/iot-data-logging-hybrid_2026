@@ -1,10 +1,12 @@
 import uvicorn
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+from pathlib import Path
+import jinja2
 
 from app.models import SensorReading, User
 from app.storage import append_to_tsfile, clear_tsfile
@@ -12,6 +14,11 @@ from app.sync import SyncManager
 from app.dashboard import router as dashboard_router
 from app.auth import get_user, oauth2_scheme, fake_users_db
 from app.config import settings
+
+templates = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(str(Path(__file__).parent / "static")),
+    autoescape=jinja2.select_autoescape(["html", "xml"]),
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -28,7 +35,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-templates = Jinja2Templates(directory="app/static")
 app.include_router(dashboard_router)
 
 @app.post("/ingest")
@@ -48,7 +54,8 @@ async def health_check():
 
 @app.get("/")
 async def read_root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    template = templates.get_template("index.html")
+    return HTMLResponse(template.render(request=request))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
