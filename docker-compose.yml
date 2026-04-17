@@ -1,0 +1,38 @@
+services:
+  iotdb:
+    image: apache/iotdb:2.0.8
+    ports:
+      - "6667:6667"
+    environment:
+      - IOTDB_USERNAME=root
+      - IOTDB_PASSWORD=root
+    volumes:
+      - iotdb_data:/iotdb/data
+    networks:
+      - iot_network
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    ports:
+      - "8000:8000"
+    environment:
+      - IOTDB_HOST=iotdb
+      - IOTDB_PORT=6667
+      - IOTDB_USER=root
+      - IOTDB_PASSWORD=root
+      - LOCAL_TSFILE_PATH=/data/tsfile.ts
+    volumes:
+      - ./data:/data
+    depends_on:
+      - iotdb
+    networks:
+      - iot_network
+
+volumes:
+  iotdb_data:
+
+networks:
+  iot_network:
+    driver: bridge
