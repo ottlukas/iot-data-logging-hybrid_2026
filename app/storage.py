@@ -8,7 +8,7 @@ async def append_to_tsfile(data: SensorReading):
     path = Path(settings.LOCAL_TSFILE_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     async with aiofiles.open(settings.LOCAL_TSFILE_PATH, mode="a") as f:
-        await f.write(json.dumps(data.model_dump()) + "\n")
+        await f.write(data.model_dump_json() + "\n")
 
 async def read_recent_tsfile(limit: int = 100):
     data = []

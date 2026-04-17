@@ -10,7 +10,7 @@ fake_users_db = {
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-def get_user(token: str):
+def get_user(token: str = Depends(oauth2_scheme)):
     user = fake_users_db.get(token)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

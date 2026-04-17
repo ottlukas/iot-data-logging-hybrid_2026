@@ -25,9 +25,7 @@ A compliant, hybrid IoT data logging system for regulated manufacturing, combini
     Open http://localhost:8000/dashboard in your browser.
 4. **Simulate Data Ingestion:**
     ```bash
-    curl -X POST "http://localhost:8000/ingest" \
-     -H "Content-Type: application/json" \
-     -d '{"device_id": "line1", "timestamp": "2026-04-17T10:00:00", "temperature": 22.5, "humidity": 50.0, "pressure": 1013.0, "electronic_signature": "operator1"}'
+   python ingest_sensor_data.py --random --count 5
 5. **Sync to IoTDB**
 - Click the "Sync to IoTDB" button on the dashboard.
 6. **Query IoTDB:**
