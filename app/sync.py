@@ -80,10 +80,6 @@ class SyncManager:
             job.errors.append(str(exc))
             logger.exception("Sync job %s failed", job_id)
         finally:
-            try:
-                await self.iotdb_client.close()
-            except Exception:
-                pass
             job.finished_at = asyncio.get_event_loop().time().__str__()
 
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:

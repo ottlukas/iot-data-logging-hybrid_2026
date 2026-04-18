@@ -32,7 +32,10 @@
 
             <div id="toast" class="toast hidden"></div>
             <div id="error-log" class="error-card hidden"></div>
-            <div id="plot" class="chart"></div>
+            <div class="charts-container" style="display: flex; flex-wrap: wrap; gap: 20px;">
+                <div id="plot" class="chart" style="flex: 1; min-width: 450px; min-height: 400px;"></div>
+                <div id="plot-iotdb" class="chart" style="flex: 1; min-width: 450px; min-height: 400px;"></div>
+            </div>
         </div>
     </div>
     <script src="/static/js/script.js"></script>

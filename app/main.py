@@ -14,8 +14,10 @@ import jinja2
 from app.auth import auth_router, get_current_user, get_current_user_from_token
 from app.buffer import BufferStore
 from app.dashboard import router as dashboard_router
+from app.iotdb_client import IoTDBClient
 from app.models import SensorReading, User
 from app.config import settings
+from app.sensor_data import SensorDataRequest, fetch_and_merge_sensor_data
 from app.sync import SyncManager
 
 logging.basicConfig(level=logging.INFO)
@@ -50,22 +52,48 @@ async def rate_limit(request: Request):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.sync_manager = SyncManager()
+    app.state.iotdb_client = IoTDBClient()
+    try:
+        await app.state.iotdb_client.connect()
+    except ImportError as exc:
+        logging.warning("IoTDB client package not installed: %s", exc)
+    except Exception as exc:
+        logging.warning("Unable to connect to IoTDB at startup: %s", exc)
+
+    app.state.sync_manager = SyncManager(iotdb_client=app.state.iotdb_client)
     app.state.rate_limits = {}
     app.state.sync_task = asyncio.create_task(app.state.sync_manager.periodic_sync())
     yield
     app.state.sync_task.cancel()
     await app.state.sync_manager.close()
+    await app.state.iotdb_client.close()
 
 app = FastAPI(lifespan=lifespan)
+
+# Import and include the IoTDB router after the app is defined
+from app.iotdb_router import router as iotdb_router
+
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(auth_router)
 app.include_router(dashboard_router)
+app.include_router(iotdb_router)  # Include the IoTDB router here
 
 @app.post("/ingest")
 async def ingest_data(reading: SensorReading, user: User = Depends(get_current_user)):
     await buffer_store.append_reading(reading)
     return {"status": "accepted"}
+
+@app.post("/sensor-data")
+async def sensor_data(request: SensorDataRequest, user: User = Depends(get_current_user)):
+    result = await fetch_and_merge_sensor_data(
+        request.iotdbConfig.dict() if request.iotdbConfig else None,
+        request.tsfilePaths,
+        request.measurements,
+        request.model_dump(exclude={"iotdbConfig", "tsfilePaths", "measurements"}),
+    )
+    if request.devicePath:
+        result["metadata"]["devicePath"] = request.devicePath
+    return result
 
 @app.post("/sync")
 async def sync_to_iotdb(request: Request, user: User = Depends(get_current_user), _: None = Depends(rate_limit)):

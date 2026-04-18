@@ -21,6 +21,7 @@ function showDashboard() {
     dashboardPanel.classList.remove('hidden');
     loginError.textContent = '';
     fetchAndPlotData();
+    fetchAndPlotIoTDB();
 }
 
 function showLogin() {
@@ -53,6 +54,13 @@ async function login() {
 }
 
 async function fetchAndPlotData() {
+    const containerId = 'plot';
+    const layout = {
+        title: 'Local IoT Sensor Data',
+        xaxis: { title: 'Timestamp' },
+        yaxis: { title: 'Value' },
+        legend: { orientation: 'h' },
+    };
     try {
         const response = await fetch('/data', {
             headers: { Authorization: `Bearer ${currentToken}` },
@@ -86,16 +94,64 @@ async function fetchAndPlotData() {
             },
         ];
 
-        const layout = {
-            title: 'IoT Sensor Data',
-            xaxis: { title: 'Timestamp' },
-            yaxis: { title: 'Value' },
-            legend: { orientation: 'h' },
-        };
-
-        Plotly.newPlot('plot', plotData, layout, { responsive: true });
+        Plotly.newPlot(containerId, plotData, layout, { responsive: true });
     } catch (err) {
-        showToast('Unable to load chart data', 'error');
+        showToast('Unable to load local chart data', 'error');
+        Plotly.newPlot(containerId, [], { ...layout, title: 'Local Data (Error Loading)' }, { responsive: true });
+    }
+}
+
+async function fetchAndPlotIoTDB() {
+    const containerId = 'plot-iotdb';
+    const layout = {
+        title: 'IoTDB Timeseries Data',
+        xaxis: { title: 'Timestamp' },
+        yaxis: { title: 'Value' },
+        legend: { orientation: 'h' },
+    };
+    try {
+        const response = await fetch('/iotdb/data', {
+            headers: { Authorization: `Bearer ${currentToken}` },
+        });
+        if (response.status === 401) {
+            showLogin();
+            return;
+        }
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ detail: response.statusText }));
+            showToast(`IoTDB: ${err.detail || response.statusText}`, 'error');
+            Plotly.newPlot(containerId, [], { ...layout, title: `IoTDB Data (Unavailable: ${response.status})` }, { responsive: true });
+            return;
+        }
+        const data = await response.json();
+        const plotData = [
+            {
+                x: data.data.map(d => new Date(d.timestamp)),
+                y: data.data.map(d => d.temperature),
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Temperature (°C)',
+            },
+            {
+                x: data.data.map(d => new Date(d.timestamp)),
+                y: data.data.map(d => d.humidity),
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Humidity (%)',
+            },
+            {
+                x: data.data.map(d => new Date(d.timestamp)),
+                y: data.data.map(d => d.pressure),
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Pressure (hPa)',
+            },
+        ];
+
+        Plotly.newPlot(containerId, plotData, layout, { responsive: true });
+    } catch (err) {
+        showToast('Unable to load IoTDB chart data', 'error');
+        Plotly.newPlot(containerId, [], { ...layout, title: 'IoTDB Data (Connection Error)' }, { responsive: true });
     }
 }
 
@@ -141,6 +197,7 @@ function subscribeToSyncStatus(jobId) {
         if (payload.status === 'completed') {
             showToast('Sync completed successfully', 'success');
             fetchAndPlotData();
+            fetchAndPlotIoTDB();
             eventSource.close();
         }
         if (payload.status === 'failed') {
