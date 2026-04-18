@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 import jinja2
 
 from app.auth import auth_router, get_current_user, get_current_user_from_token
-from app.buffer import BufferStore
+from app.storage import buffer_store
 from app.dashboard import router as dashboard_router
 from app.iotdb_client import IoTDBClient
 from app.models import SensorReading, User
@@ -26,8 +26,6 @@ templates = jinja2.Environment(
     loader=jinja2.FileSystemLoader(str(Path(__file__).parent / "static")),
     autoescape=jinja2.select_autoescape(["html", "xml"]),
 )
-
-buffer_store = BufferStore()
 
 def get_client_ip(request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-for")
@@ -52,6 +50,10 @@ async def rate_limit(request: Request):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure the buffer directory exists at startup
+    if buffer_store.buffer_path:
+        buffer_store.buffer_path.parent.mkdir(parents=True, exist_ok=True)
+
     app.state.iotdb_client = IoTDBClient()
     try:
         await app.state.iotdb_client.connect()
@@ -60,7 +62,8 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logging.warning("Unable to connect to IoTDB at startup: %s", exc)
 
-    app.state.sync_manager = SyncManager(iotdb_client=app.state.iotdb_client)
+    # Shared buffer_store ensures consistency between ingestion and sync
+    app.state.sync_manager = SyncManager(buffer_store=buffer_store, iotdb_client=app.state.iotdb_client)
     app.state.rate_limits = {}
     app.state.sync_task = asyncio.create_task(app.state.sync_manager.periodic_sync())
     yield
@@ -80,8 +83,16 @@ app.include_router(iotdb_router)  # Include the IoTDB router here
 
 @app.post("/ingest")
 async def ingest_data(reading: SensorReading, user: User = Depends(get_current_user)):
+    logging.info("Ingesting data for device %s", reading.device_id)
     await buffer_store.append_reading(reading)
     return {"status": "accepted"}
+
+@app.get("/buffer/status")
+async def get_buffer_status(user: User = Depends(get_current_user)):
+    path = buffer_store.buffer_path
+    exists = path.exists()
+    size_kb = round(path.stat().st_size / 1024, 2) if exists else 0
+    return {"exists": exists, "size_kb": size_kb, "filename": path.name}
 
 @app.post("/sensor-data")
 async def sensor_data(request: SensorDataRequest, user: User = Depends(get_current_user)):

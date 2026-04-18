@@ -56,6 +56,7 @@ class SyncManager:
             index = await self.buffer_store.get_index()
             path = self.buffer_store.buffer_path
             offset = index.get(path.name, 0)
+            logger.info("Starting sync for %s from offset %d", path.name, offset)
             if offset >= 0:
                 async for batch in self.buffer_store.read_batches(path, offset, settings.BATCH_SIZE):
                     try:
@@ -63,12 +64,14 @@ class SyncManager:
                         offset += len(batch)
                         job.processed_records += len(batch)
                         job.progress = min(100.0, (job.processed_records / total) * 100)
+                        logger.debug("Job %s: Processed %d/%d records", job_id, job.processed_records, total)
                         await self.buffer_store.update_index(path, offset)
                     except Exception as sync_error:
                         job.errors.append(str(sync_error))
                         raise
 
             if await self.buffer_store.count_unprocessed_lines(path, offset) == 0:
+                logger.info("Archiving buffer file %s after successful sync", path.name)
                 await self.buffer_store.archive_file(path)
                 job.status = "completed"
                 job.progress = 100.0

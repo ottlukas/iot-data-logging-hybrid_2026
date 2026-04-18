@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -23,6 +24,10 @@ class IoTDBClient:
         self.session = None
 
     async def connect(self):
+        # Prevent session leaks by checking if already connected
+        if self.session is not None:
+            return
+            
         if Session is None:
             raise ImportError("IoTDB python client is not installed")
 
@@ -140,6 +145,7 @@ class IoTDBClient:
             sql = f"SELECT * FROM root.factory.* WHERE time >= {start_ms} ORDER BY time DESC LIMIT {limit}"
         logger.debug("Executing IoTDB query: %s", sql)
 
+        start_perf = time.perf_counter()
         try:
             dataset = await asyncio.to_thread(self.session.execute_query_statement, sql)
             column_names = dataset.get_column_names()
@@ -183,10 +189,11 @@ class IoTDBClient:
             # Sort by timestamp descending and take limit
             data.sort(key=lambda x: x["timestamp"], reverse=True)
             data = data[:limit]
-            logger.debug("Retrieved %s rows from IoTDB", len(data))
+            duration = time.perf_counter() - start_perf
+            logger.info("Retrieved %d rows from IoTDB in %.3f seconds", len(data), duration)
             return data
         except Exception as e:
-            logger.error("Error executing IoTDB query: %s", e)
+            logger.error("Error executing IoTDB query: %s. SQL: %s", e, sql)
             raise RuntimeError(f"IoTDB query failed: {e}")
         finally:
             if 'dataset' in locals():

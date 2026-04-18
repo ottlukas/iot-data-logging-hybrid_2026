@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse
-from app.storage import read_recent_tsfile
+from app.storage import read_recent_tsfile, buffer_store
 from app.auth import get_current_user
 from pathlib import Path
 import jinja2
@@ -19,4 +19,8 @@ async def dashboard(request: Request):
 @router.get("/data")
 async def get_data(user=Depends(get_current_user)):
     data = await read_recent_tsfile(100)
-    return {"data": [d.model_dump() for d in data]}
+    return {
+        "exists": buffer_store.buffer_path.exists(),
+        "is_empty": len(data) == 0,
+        "data": [d.model_dump() for d in data]
+    }

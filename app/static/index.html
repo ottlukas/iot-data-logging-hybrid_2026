@@ -6,6 +6,24 @@
     <title>Hybrid IoT Dashboard</title>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        @keyframes status-pulse {
+            0% { box-shadow: 0 0 8px 2px rgba(40, 167, 69, 0.4); }
+            100% { box-shadow: none; }
+        }
+        .pulse-effect {
+            animation: status-pulse 0.6s ease-out;
+        }
+        .last-updated {
+            font-size: 0.85em;
+            color: #6c757d;
+            font-weight: normal;
+            margin-left: 10px;
+            display: inline-block;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+    </style>
 </head>
 <body>
     <div class="app">
@@ -24,17 +42,35 @@
             <div class="sync-section card">
                 <button id="sync-button">Sync to IoTDB</button>
                 <button id="retry-button">Retry Last Sync</button>
+                <div id="buffer-info" class="buffer-status">
+                    <span class="status-dot"></span>
+                    <span id="buffer-text">Checking local buffer...</span>
+                    <span id="buffer-last-updated" class="last-updated"></span>
+                </div>
                 <div class="status-row">
                     <span id="sync-status">No sync started</span>
                     <span id="sync-progress"></span>
+                    <span id="refresh-countdown" class="last-updated" style="margin-left: auto;"></span>
                 </div>
             </div>
 
             <div id="toast" class="toast hidden"></div>
             <div id="error-log" class="error-card hidden"></div>
             <div class="charts-container" style="display: flex; flex-wrap: wrap; gap: 20px;">
-                <div id="plot" class="chart" style="flex: 1; min-width: 450px; min-height: 400px;"></div>
-                <div id="plot-iotdb" class="chart" style="flex: 1; min-width: 450px; min-height: 400px;"></div>
+                <div style="flex: 1; min-width: 450px;">
+                    <div id="tsfile-status" style="margin-bottom: 10px; font-weight: bold; padding: 5px; background: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
+                        <span id="tsfile-status-text"></span>
+                        <span id="tsfile-last-updated" class="last-updated"></span>
+                    </div>
+                    <div id="plot" class="chart" style="min-height: 400px;"></div>
+                </div>
+                <div style="flex: 1; min-width: 450px;">
+                    <div id="iotdb-status" style="margin-bottom: 10px; font-weight: bold; padding: 5px; background: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
+                        <span id="iotdb-status-text">IoTDB Status: Ready</span>
+                        <span id="iotdb-last-updated" class="last-updated"></span>
+                    </div>
+                    <div id="plot-iotdb" class="chart" style="min-height: 400px;"></div>
+                </div>
             </div>
         </div>
     </div>
