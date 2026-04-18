@@ -1,5 +1,6 @@
 import asyncio
 from collections import defaultdict
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
@@ -8,8 +9,16 @@ import aiofiles
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+try:
+    from tsfile import TSFileReader
+except ImportError:
+    TSFileReader = None
+
 from app.iotdb_client import IoTDBClient
 from app.models import SensorReading
+
+TSFILE_INSTALL_URL = "https://tsfile.apache.org/UserGuide/latest/QuickStart/QuickStart-PYTHON.html"
+logger = logging.getLogger(__name__)
 
 
 class IoTDBConfig(BaseModel):
@@ -125,37 +134,73 @@ async def read_tsfile_points(
     start_ms: int,
     end_ms: int,
 ) -> AsyncIterator[Dict[str, Any]]:
+    if TSFileReader is None:
+        logger.warning(f"tsfile package not installed, falling back to JSON reading. See {TSFILE_INSTALL_URL}")
+
     for file_path in tsfile_paths:
         path = Path(file_path)
+        logger.info(f"Checking for TSFile data at: {path.absolute()}")
         if not path.exists():
+            logger.warning(f"File path provided in request does not exist: {path}")
             continue
+        logger.info(f"File found. Attempting to query binary data from {path.name}")
+
+        # Try to read as Apache TSFile first
+        if TSFileReader:
+            try:
+                def query_tsfile():
+                    reader = TSFileReader(str(path))
+                    pts = []
+                    try:
+                        # Default device path for local sensor data. 
+                        # In a multi-device setup, metadata discovery would be used.
+                        device = "root.factory.line1"
+                        for m in measurements:
+                            query_res = reader.query(device, m, start_ms, end_ms)
+                            while query_res.has_next():
+                                row = query_res.next()
+                                ts = row.get_timestamp()
+                                pts.append({
+                                    "timestamp": ts,
+                                    "measurement": m,
+                                    "value": normalize_numeric(row.get_value()),
+                                    "source": "tsfile",
+                                    "originalTimestampISO": datetime.fromtimestamp(ts / 1000.0, timezone.utc).isoformat().replace("+00:00", "Z"),
+                                    "quality": "ok",
+                                })
+                            query_res.close()
+                        return pts
+                    finally:
+                        reader.close()
+
+                points = await asyncio.to_thread(query_tsfile)
+                for p in points:
+                    yield p
+                continue  # Successfully read as TSFile, skip JSON fallback
+            except Exception as e:
+                logger.debug("Path %s is not a valid TSFile or error reading: %s", path, e)
+
+        # Fallback to existing line-delimited JSON reading for backward compatibility
+        logger.info(f"Reading {path.name} as line-delimited JSON")
         async with aiofiles.open(path, mode="r", encoding="utf-8") as f:
             async for raw in f:
                 line = raw.strip()
-                if not line:
-                    continue
+                if not line: continue
                 try:
                     reading = SensorReading.model_validate_json(line)
-                except Exception:
-                    continue
-                timestamp_ms = int(
-                    reading.timestamp.astimezone(timezone.utc).timestamp() * 1000
-                    if reading.timestamp.tzinfo is not None
-                    else reading.timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000
-                )
-                if timestamp_ms < start_ms or timestamp_ms > end_ms:
-                    continue
-                original_iso = reading.timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-                for measurement in measurements:
-                    value = normalize_numeric(getattr(reading, measurement, None))
-                    yield {
-                        "timestamp": timestamp_ms,
-                        "measurement": measurement,
-                        "value": value,
-                        "source": "tsfile",
-                        "originalTimestampISO": original_iso,
-                        "quality": "ok",
-                    }
+                    ts_ms = int(reading.timestamp.timestamp() * 1000)
+                    if ts_ms < start_ms or ts_ms > end_ms: continue
+                    iso = reading.timestamp.isoformat().replace("+00:00", "Z")
+                    for m in measurements:
+                        yield {
+                            "timestamp": ts_ms,
+                            "measurement": m,
+                            "value": normalize_numeric(getattr(reading, m, None)),
+                            "source": "tsfile",
+                            "originalTimestampISO": iso,
+                            "quality": "ok",
+                        }
+                except Exception: continue
 
 
 def build_series_and_rows(

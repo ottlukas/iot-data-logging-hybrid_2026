@@ -1,8 +1,17 @@
 import argparse
+import json
 import random
 import requests
 from datetime import datetime
+import sys
+from pathlib import Path
 
+try:
+    from tsfile import TSFileWriter, TSFileReader, Tablet, TSDataType
+except ImportError:
+    TSFileWriter = TSFileReader = Tablet = TSDataType = None
+
+TSFILE_INSTALL_URL = "https://tsfile.apache.org/UserGuide/latest/QuickStart/QuickStart-PYTHON.html"
 FASTAPI_URL = "http://localhost:8000"
 
 
@@ -61,15 +70,107 @@ def ingest_sensor_data(
         print(f"❌ Failed to send data: {e}")
 
 
+def write_direct_to_tsfile(output_path: str, readings: list, device_id: str):
+    """Writes readings directly to a local Apache TSFile."""
+    if TSFileWriter is None:
+        print(f"⚠️ Warning: 'tsfile' library not installed. Falling back to JSON.")
+        print(f"👉 Follow instructions at: {TSFILE_INSTALL_URL}")
+        
+        print(f"📦 Writing {len(readings)} points as JSON to {output_path}...")
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "a", encoding="utf-8") as f:
+            for r in readings:
+                f.write(json.dumps(r) + "\n")
+        return
+
+    print(f"📦 Writing {len(readings)} points to {output_path}...")
+    
+    # Prepare Tablet data
+    measurements = ["temperature", "humidity", "pressure"]
+    data_types = [TSDataType.FLOAT, TSDataType.FLOAT, TSDataType.FLOAT]
+    
+    timestamps = []
+    values = [[], [], []]
+    
+    for r in readings:
+        ts = int(datetime.fromisoformat(r["timestamp"]).timestamp() * 1000)
+        timestamps.append(ts)
+        values[0].append(float(r["temperature"]))
+        values[1].append(float(r["humidity"]))
+        values[2].append(float(r["pressure"]))
+
+    device_path = f"root.factory.{device_id}"
+    tablet = Tablet(device_path, measurements, data_types, values, timestamps)
+    
+    writer = TSFileWriter(output_path)
+    try:
+        writer.write_tablet(tablet)
+        print("✅ Successfully wrote local TSFile.")
+    finally:
+        writer.close()
+
+
+def verify_tsfile(path: str):
+    """Verified the readability of a TSFile and catches errors."""
+    if TSFileReader is None:
+        print(f"❌ Error: 'tsfile' library not installed. Cannot verify binary files.")
+        print(f"👉 Follow instructions at: {TSFILE_INSTALL_URL}")
+        return
+
+    if not Path(path).exists():
+        print(f"❌ Error: File not found at {path}")
+        return
+
+    print(f"🔍 Verifying TSFile: {path}")
+    try:
+        reader = TSFileReader(path)
+        try:
+            # In a real scenario, you might discover devices first. 
+            # Here we check the standard path.
+            device = "root.factory.line1"
+            print(f"   Reading device: {device}")
+            
+            for m in ["temperature", "humidity", "pressure"]:
+                query_res = reader.query(device, m, 0, sys.maxsize)
+                count = 0
+                while query_res.has_next():
+                    query_res.next()
+                    count += 1
+                print(f"   - Measurement '{m}': {count} points found.")
+                query_res.close()
+            
+            print("✅ TSFile is valid and readable.")
+        finally:
+            reader.close()
+    except Exception as e:
+        print(f"❌ TSFile verification failed (File may be corrupted): {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Ingest sensor data into the FastAPI app.")
     parser.add_argument("--random", action="store_true", help="Send randomized sensor readings.")
     parser.add_argument("--count", type=int, default=1, help="Number of readings to send when using --random.")
     parser.add_argument("--device-id", default="line1", help="Device ID to send.")
+    parser.add_argument("--local", action="store_true", help="Write directly to a local TSFile instead of the API.")
+    parser.add_argument("--output", default="data/tsfiles/manual_ingest.tsfile", help="Local output path for --local.")
+    parser.add_argument("--verify", help="Verify the readability of a specific TSFile path.")
     parser.add_argument("--signature", default="operator1", help="Electronic signature value.")
     parser.add_argument("--username", default="operator", help="Login username for API authentication.")
     parser.add_argument("--password", default="operator", help="Login password for API authentication.")
     args = parser.parse_args()
+
+    if args.verify:
+        verify_tsfile(args.verify)
+        return
+
+    if args.local:
+        if TSFileWriter is None:
+            print("⚠️ Warning: 'tsfile' package missing. Local mode will use JSON fallback.")
+            
+        readings = [generate_random_reading(args.device_id) for _ in range(args.count)]
+        write_direct_to_tsfile(args.output, readings, args.device_id)
+        return
 
     token = fetch_access_token(args.username, args.password)
 

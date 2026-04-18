@@ -108,3 +108,47 @@ def test_sync_endpoint_requires_jwt_and_returns_job_id():
     response = test_client.post('/sync', headers={'Authorization': f'Bearer {token}'})
     assert response.status_code == 200
     assert response.json()['job_id'] == 'dummy-job-id'
+
+
+def test_tsfile_reader_error_handling(tmp_path):
+    """Tests that the reader handles missing or corrupted binary files gracefully."""
+    from app.sensor_data import read_tsfile_points
+    import pytest
+
+    # Case 1: File does not exist
+    missing_file = str(tmp_path / "non_existent.tsfile")
+    
+    async def run_missing():
+        points = []
+        async for p in read_tsfile_points([missing_file], ["temperature"], 0, 9999999999999):
+            points.append(p)
+        return points
+
+    results = asyncio.run(run_missing())
+    assert results == []
+
+    # Case 2: Corrupted File (Writing random bytes)
+    corrupt_file = tmp_path / "corrupt.tsfile"
+    corrupt_file.write_bytes(b"NOT_A_TSFILE_HEADER" * 10)
+    
+    async def run_corrupt():
+        points = []
+        async for p in read_tsfile_points([str(corrupt_file)], ["temperature"], 0, 9999999999999):
+            points.append(p)
+        return points
+
+    # Should not raise exception, but log error and return empty list or fallback to JSON
+    results = asyncio.run(run_corrupt())
+    assert isinstance(results, list)
+
+    # Case 3: Empty File
+    empty_file = tmp_path / "empty.tsfile"
+    empty_file.write_bytes(b"")
+    
+    async def run_empty():
+        points = []
+        async for p in read_tsfile_points([str(empty_file)], ["temperature"], 0, 9999999999999):
+            points.append(p)
+        return points
+    results = asyncio.run(run_empty())
+    assert results == []
