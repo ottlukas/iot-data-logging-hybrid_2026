@@ -50,6 +50,10 @@ async def rate_limit(request: Request):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Log platform info and resolved paths at startup
+    from app.platform_utils import log_platform_info
+    log_platform_info()
+
     # Ensure the buffer directory exists at startup
     if buffer_store.buffer_path:
         buffer_store.buffer_path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +80,7 @@ app = FastAPI(lifespan=lifespan)
 # Import and include the IoTDB router after the app is defined
 from app.iotdb_router import router as iotdb_router
 
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.include_router(auth_router)
 app.include_router(dashboard_router)
 app.include_router(iotdb_router)  # Include the IoTDB router here

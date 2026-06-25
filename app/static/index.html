@@ -39,6 +39,39 @@
         </div>
 
         <div id="dashboard-panel" class="hidden">
+            <!-- Metrics Grid -->
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-icon">📁</div>
+                    <div class="metric-details">
+                        <span class="metric-title">Local Buffer</span>
+                        <span id="metric-buffer-status" class="metric-value">Checking...</span>
+                    </div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-icon">⚡</div>
+                    <div class="metric-details">
+                        <span class="metric-title">IoTDB Cloud Status</span>
+                        <span id="metric-iotdb-status" class="metric-value">Connecting...</span>
+                    </div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-icon">📟</div>
+                    <div class="metric-details">
+                        <span class="metric-title">Active Devices</span>
+                        <span id="metric-active-devices" class="metric-value">None</span>
+                    </div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-icon">🔄</div>
+                    <div class="metric-details">
+                        <span class="metric-title">Last Sync Job</span>
+                        <span id="metric-last-sync" class="metric-value">Never</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sync Controls -->
             <div class="sync-section card">
                 <button id="sync-button">Sync to IoTDB</button>
                 <button id="retry-button">Retry Last Sync</button>
@@ -54,22 +87,25 @@
                 </div>
             </div>
 
+
             <div id="toast" class="toast hidden"></div>
             <div id="error-log" class="error-card hidden"></div>
-            <div class="charts-container" style="display: flex; flex-wrap: wrap; gap: 20px;">
-                <div style="flex: 1; min-width: 450px;">
-                    <div id="tsfile-status" style="margin-bottom: 10px; font-weight: bold; padding: 5px; background: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
-                        <span id="tsfile-status-text"></span>
+
+            <!-- Charts Grid -->
+            <div class="charts-container">
+                <div class="card chart-card">
+                    <div id="tsfile-status" class="chart-header">
+                        <span id="tsfile-status-text">TSFile: Checking...</span>
                         <span id="tsfile-last-updated" class="last-updated"></span>
                     </div>
-                    <div id="plot" class="chart" style="min-height: 400px;"></div>
+                    <div id="plot" class="chart"></div>
                 </div>
-                <div style="flex: 1; min-width: 450px;">
-                    <div id="iotdb-status" style="margin-bottom: 10px; font-weight: bold; padding: 5px; background: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
-                        <span id="iotdb-status-text">IoTDB Status: Ready</span>
+                <div class="card chart-card">
+                    <div id="iotdb-status" class="chart-header">
+                        <span id="iotdb-status-text">IoTDB Status: Checking...</span>
                         <span id="iotdb-last-updated" class="last-updated"></span>
                     </div>
-                    <div id="plot-iotdb" class="chart" style="min-height: 400px;"></div>
+                    <div id="plot-iotdb" class="chart"></div>
                 </div>
             </div>
         </div>

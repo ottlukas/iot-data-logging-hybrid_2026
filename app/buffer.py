@@ -171,21 +171,23 @@ class BufferStore:
                 yield readings
 
     async def clear_buffer(self):
-        index_path = Path(settings.LOCAL_INDEX_FILE)
-        if index_path.exists():
-            index_path.unlink()
-        if self.buffer_path.exists():
-            self.buffer_path.unlink()
+        async with self._lock:
+            index_path = Path(settings.LOCAL_INDEX_FILE)
+            if index_path.exists():
+                index_path.unlink()
+            if self.buffer_path.exists():
+                self.buffer_path.unlink()
 
     async def archive_file(self, path: Path):
         """
         Archive the TSFile once it is synchronized.
         """
-        archive_dir = Path(settings.LOCAL_ARCHIVE_DIR)
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        dest = archive_dir / f"{path.stem}_{timestamp}{path.suffix}"
-        
-        await asyncio.to_thread(shutil.move, str(path), str(dest))
-        logger.info("Archived Apache TSFile to %s", dest)
+        async with self._lock:
+            archive_dir = Path(settings.LOCAL_ARCHIVE_DIR)
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest = archive_dir / f"{path.stem}_{timestamp}{path.suffix}"
+            
+            await asyncio.to_thread(shutil.move, str(path), str(dest))
+            logger.info("Archived Apache TSFile to %s", dest)

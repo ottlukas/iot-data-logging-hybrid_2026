@@ -86,6 +86,9 @@ def write_direct_to_tsfile(output_path: str, readings: list, device_id: str):
 
     print(f"📦 Writing {len(readings)} points to {output_path}...")
     
+    # Ensure parent directory exists
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    
     # Prepare Tablet data
     measurements = ["temperature", "humidity", "pressure"]
     data_types = [TSDataType.FLOAT, TSDataType.FLOAT, TSDataType.FLOAT]
