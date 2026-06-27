@@ -107,11 +107,30 @@ async function updateBufferStatus() {
 function showLogin() {
     loginPanel.classList.remove('hidden');
     dashboardPanel.classList.add('hidden');
+    loginError.textContent = '';
+}
+
+function validateLoginInput(username, password) {
+    if (!username || username.trim() === '') {
+        loginError.textContent = 'Username is required';
+        return false;
+    }
+    if (!password || password.trim() === '') {
+        loginError.textContent = 'Password is required';
+        return false;
+    }
+    return true;
 }
 
 async function login() {
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
+    
+    // Validate input
+    if (!validateLoginInput(username, password)) {
+        return;
+    }
+    
     try {
         const response = await fetch('/token', {
             method: 'POST',
@@ -120,7 +139,7 @@ async function login() {
         });
         if (!response.ok) {
             const error = await response.json();
-            loginError.textContent = error.detail || 'Login failed';
+            loginError.textContent = error.detail || 'Login failed - Invalid credentials';
             return;
         }
         const data = await response.json();
@@ -129,7 +148,7 @@ async function login() {
         showDashboard();
         showToast('Logged in successfully', 'success');
     } catch (err) {
-        loginError.textContent = 'Unable to contact server';
+        loginError.textContent = 'Unable to contact server - Please check your connection';
     }
 }
 
@@ -159,7 +178,7 @@ function getDarkChartLayout(titleText) {
         legend: { 
             orientation: 'h', 
             x: 0.5, 
-            xanchor: 'center',
+            xanchor: 'center', 
             y: -0.2, 
             font: { color: '#9ca3af', size: 11 } 
         },
@@ -175,7 +194,7 @@ function getChartTraces(dataPoints) {
             y: dataPoints.map(d => d.temperature),
             type: 'scatter',
             mode: 'lines+markers',
-            name: 'Temperature (°C)',
+            name: 'Temperature (\u00b0C)',
             line: { color: '#38bdf8', width: 2 },
             marker: { color: '#38bdf8', size: 4 }
         },
@@ -346,14 +365,30 @@ function subscribeToSyncStatus(jobId) {
         syncProgress.textContent = 'Connection lost, retrying...';
     };
 }
+
 // Event Listeners
 document.getElementById('login-button').addEventListener('click', login);
 document.getElementById('sync-button').addEventListener('click', triggerSync);
 document.getElementById('retry-button').addEventListener('click', triggerSync);
 
+// Allow login on Enter key
+const usernameInput = document.getElementById('username');
+const passwordInput = document.getElementById('password');
+if (usernameInput && passwordInput) {
+    usernameInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            passwordInput.focus();
+        }
+    });
+    passwordInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            login();
+        }
+    });
+}
+
 if (currentToken) {
     showDashboard();
 } else {
     showLogin();
-}
 }
