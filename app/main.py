@@ -69,9 +69,7 @@ async def lifespan(app: FastAPI):
     # Shared buffer_store ensures consistency between ingestion and sync
     app.state.sync_manager = SyncManager(buffer_store=buffer_store, iotdb_client=app.state.iotdb_client)
     app.state.rate_limits = {}
-    app.state.sync_task = asyncio.create_task(app.state.sync_manager.periodic_sync())
     yield
-    app.state.sync_task.cancel()
     await app.state.sync_manager.close()
     await app.state.iotdb_client.close()
 
