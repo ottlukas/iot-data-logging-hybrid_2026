@@ -2,7 +2,7 @@
 
 A robust, local-first time-series data management system featuring a FastAPI backend, an Apache IoTDB cloud integration, and a real-time Plotly dashboard.
 
-## [Building] System Architecture
+## System Architecture
 
 1.  **Ingestion**: Sensors send JSON data to the `/ingest` endpoint.
 2.  **Local Buffering**: Data is immediately appended to a local line-delimited JSON "TSFile" for offline resilience.
@@ -25,17 +25,17 @@ A robust, local-first time-series data management system featuring a FastAPI bac
     -   Rate-limiting on sync triggers to prevent system abuse.
     -   Graceful error handling for offline IoTDB instances.
 
-## [Laptop] Windows and Linux Setup
+## Windows and Linux Setup
 
 This system is designed to run seamlessly on both Linux and Windows operating systems. All filesystem path operations are platform-independent.
 
-### [Clipboard] Prerequisites
+### Prerequisites
 - **Python**: Version 3.10, 3.11, or 3.12 (Python 3.13 is supported in fallback mode).
 - **Docker & Docker Compose**: (Optional, required for containerized deployment).
 
 ---
 
-### [Snake] Virtual Environment Setup
+### Virtual Environment Setup
 
 #### Linux/macOS
 Create and activate a virtual environment:
@@ -66,7 +66,7 @@ pip install -r requirements.txt httpx pytest-asyncio requests
 
 ---
 
-### [Rocket] Running the FastAPI App Locally
+### Running the FastAPI App Locally
 
 Start the application with Uvicorn:
 ```bash
@@ -82,7 +82,7 @@ Default login accounts:
 
 ---
 
-### [Test Tube] Running Tests
+### Running Tests
 
 Run the complete, cross-platform test suite:
 ```bash
@@ -91,7 +91,7 @@ python -m pytest
 
 ---
 
-### [Whale] Running with Docker Compose
+### Running with Docker Compose
 
 To spin up the application along with Apache IoTDB using Docker:
 
@@ -139,35 +139,35 @@ The application can be configured using environment variables. Paths are normali
 
 ---
 
-## [Magnifying Glass] Troubleshooting
+## Troubleshooting
 
 ### [File Folder] Path Issues & Separators
 - **Problem**: Logged paths look strange or raise errors on Windows.
 - **Solution**: The application uses Python's `pathlib.Path` globally. Always format any custom paths passed via environment variables cleanly (e.g., `LOCAL_TSFILE_PATH="C:\my\path\buffer.tsfile"` on Windows, or `LOCAL_TSFILE_PATH="/my/path/buffer.tsfile"` on Linux). Slashes are automatically normalized during Settings initialization.
 
-### [Package] Missing `tsfile` Package
+### Missing `tsfile` Package
 - **Problem**: Warning: `tsfile package not installed. Falling back to JSON appending`.
 - **Solution**: The `tsfile` library relies on C/C++ compilation. If a binary wheel is unavailable for your Python version or OS, installing it from source requires tools like `gcc` (Linux) or MSVC C++ Build Tools (Windows). Without them, the backend runs in a robust JSON-fallback mode which writes line-delimited JSON. You do not need to compile `tsfile` to use this hybrid system.
 
-### [Gear] IoTDB Not Reachable
+### IoTDB Not Reachable
 - **Problem**: `Unable to connect to IoTDB` warning on startup, or sync jobs fail.
 - **Solution**:
   1. If running locally, check that Apache IoTDB is started and listening on port `6667`.
   2. If using Docker, check that both containers are on the `iot_network` bridge network.
   3. Ensure that the `IOTDB_HOST` environment variable is set to `iotdb` (the service name) when running under Docker, and `localhost` (or `127.0.0.1`) when running the FastAPI app directly.
 
-### [Whale] Docker Volume / Path Behavior on Windows
+### Docker Volume / Path Behavior on Windows
 - **Problem**: FastAPI container cannot read or write to `./data` mount on Windows, or files do not update.
 - **Solution**:
   - Docker Desktop on Windows sometimes requires File Sharing permissions to be enabled for your project directory (check settings under *Resources > File sharing*).
   - Use relative path syntax `./data` in your docker-compose file. Avoid using absolute host paths starting with `C:\...` unless mapped correctly.
 
-### [Key] Permission Issues
+### Permission Issues
 - **Problem**: `PermissionError` when archiving or writing files (especially on Windows).
 - **Solution**:
   - Windows locks files when they are opened by any process or thread. The system is engineered to explicitly release file handles (`reader.close()`/`writer.close()`) and uses an `asyncio.Lock` around archive operations to prevent race conditions during concurrent requests. Ensure no external processes (like an open editor or Excel view) are locking the TSFile buffer.
 
-## [Desktop] API Reference
+## API Reference
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
@@ -178,7 +178,7 @@ The application can be configured using environment variables. Paths are normali
 | `/sync` | POST | Trigger manual background sync job. |
 | `/buffer/status`| GET | Check existence and size of local buffer file. |
 
-## [Package] Buffering and Sync
+## Buffering and Sync
 
 Sensor readings are buffered locally in `data/tsfiles/buffer_current.tsfile` and tracked in `data/tsfiles/index.json`.
 
