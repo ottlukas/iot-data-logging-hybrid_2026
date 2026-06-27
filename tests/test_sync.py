@@ -152,3 +152,75 @@ def test_tsfile_reader_error_handling(tmp_path):
         return points
     results = asyncio.run(run_empty())
     assert results == []
+
+
+def test_default_path_resolution():
+    """Verify that default settings use correct, OS-independent path structure."""
+    from app.config import Settings
+    import os
+    
+    # Temporarily remove env vars to get default settings
+    old_tsfile = os.environ.pop("LOCAL_TSFILE_PATH", None)
+    old_archive = os.environ.pop("LOCAL_ARCHIVE_DIR", None)
+    old_index = os.environ.pop("LOCAL_INDEX_FILE", None)
+    
+    try:
+        s = Settings()
+        assert "data" in s.LOCAL_TSFILE_PATH
+        assert "tsfiles" in s.LOCAL_TSFILE_PATH
+        p = Path(s.LOCAL_TSFILE_PATH)
+        assert p.name == "buffer_current.tsfile"
+    finally:
+        if old_tsfile is not None:
+            os.environ["LOCAL_TSFILE_PATH"] = old_tsfile
+        if old_archive is not None:
+            os.environ["LOCAL_ARCHIVE_DIR"] = old_archive
+        if old_index is not None:
+            os.environ["LOCAL_INDEX_FILE"] = old_index
+
+
+def test_env_path_override_and_normalization():
+    """Verify that paths provided via env vars are normalized correctly."""
+    from app.config import Settings
+    
+    win_path = "data\\custom_dir\\sub_dir\\buffer.tsfile"
+    s = Settings(LOCAL_TSFILE_PATH=win_path)
+    
+    expected = str(Path(win_path))
+    assert s.LOCAL_TSFILE_PATH == expected
+    assert isinstance(s.LOCAL_TSFILE_DIR, Path)
+
+
+def test_platform_utils_logging():
+    """Verify that log_platform_info runs without errors and returns diagnostic keys."""
+    from app.platform_utils import log_platform_info
+    info = log_platform_info()
+    
+    assert "platform" in info
+    if "error" not in info:
+        assert "resolved_tsfile" in info
+        assert "resolved_archive" in info
+        assert "resolved_index" in info
+
+
+def test_ingest_script_creates_parent_directory(tmp_path):
+    """Verify that the ingestion script creates parent directory before writing files."""
+    from ingest_sensor_data import write_direct_to_tsfile
+    
+    out_dir = tmp_path / "new_nested_dir" / "deeper_dir"
+    out_file = out_dir / "test_ingest.tsfile"
+    
+    assert not out_dir.exists()
+    
+    readings = [{
+        "device_id": "line1",
+        "timestamp": "2026-06-25T18:00:00",
+        "temperature": 22.0,
+        "humidity": 50.0,
+        "pressure": 1012.0
+    }]
+    
+    write_direct_to_tsfile(str(out_file), readings, "line1")
+    
+    assert out_dir.exists()
+    assert out_file.exists()

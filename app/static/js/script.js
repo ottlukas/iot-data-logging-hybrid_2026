@@ -68,6 +68,7 @@ function showDashboard() {
     updateBufferStatus();
     fetchAndPlotData();
     fetchAndPlotIoTDB();
+    startAutoreload();
 }
 
 async function updateBufferStatus() {
@@ -80,15 +81,26 @@ async function updateBufferStatus() {
             if (data.exists) {
                 bufferText.textContent = `Local TSfile: ${data.filename} (${data.size_kb} KB)`;
                 bufferInfo.classList.add('active');
-                triggerPulse(bufferInfo.querySelector('.status-dot'));
+                const dot = bufferInfo.querySelector('.status-dot');
+                if (dot) {
+                    dot.classList.remove('error-dot');
+                    triggerPulse(dot);
+                }
                 updateTimestamp('buffer-last-updated');
+                document.getElementById('metric-buffer-status').textContent = `Active (${data.size_kb} KB)`;
             } else {
                 bufferText.textContent = 'No local TSfile found (Buffer is empty)';
                 bufferInfo.classList.remove('active');
+                const dot = bufferInfo.querySelector('.status-dot');
+                if (dot) dot.classList.remove('error-dot');
+                document.getElementById('metric-buffer-status').textContent = 'Empty';
             }
         }
     } catch (err) {
         bufferText.textContent = 'Buffer status unavailable';
+        document.getElementById('metric-buffer-status').textContent = 'Offline';
+        const dot = bufferInfo.querySelector('.status-dot');
+        if (dot) dot.classList.add('error-dot');
     }
 }
 
@@ -121,16 +133,79 @@ async function login() {
     }
 }
 
+function getDarkChartLayout(titleText) {
+    return {
+        title: {
+            text: titleText,
+            font: { color: '#f3f4f6', family: 'Inter, sans-serif', size: 15, weight: 'bold' }
+        },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { color: '#9ca3af', family: 'Inter, sans-serif' },
+        xaxis: { 
+            title: 'Timestamp',
+            gridcolor: 'rgba(255, 255, 255, 0.05)',
+            linecolor: 'rgba(255, 255, 255, 0.1)',
+            tickcolor: 'rgba(255, 255, 255, 0.2)',
+            zerolinecolor: 'rgba(255, 255, 255, 0.05)'
+        },
+        yaxis: { 
+            title: 'Value',
+            gridcolor: 'rgba(255, 255, 255, 0.05)',
+            linecolor: 'rgba(255, 255, 255, 0.1)',
+            tickcolor: 'rgba(255, 255, 255, 0.2)',
+            zerolinecolor: 'rgba(255, 255, 255, 0.05)'
+        },
+        legend: { 
+            orientation: 'h', 
+            x: 0.5, 
+            xanchor: 'center',
+            y: -0.2, 
+            font: { color: '#9ca3af', size: 11 } 
+        },
+        margin: { t: 50, b: 60, l: 60, r: 20 },
+        hovermode: 'closest'
+    };
+}
+
+function getChartTraces(dataPoints) {
+    return [
+        {
+            x: dataPoints.map(d => new Date(d.timestamp)),
+            y: dataPoints.map(d => d.temperature),
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Temperature (°C)',
+            line: { color: '#38bdf8', width: 2 },
+            marker: { color: '#38bdf8', size: 4 }
+        },
+        {
+            x: dataPoints.map(d => new Date(d.timestamp)),
+            y: dataPoints.map(d => d.humidity),
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Humidity (%)',
+            line: { color: '#34d399', width: 2 },
+            marker: { color: '#34d399', size: 4 }
+        },
+        {
+            x: dataPoints.map(d => new Date(d.timestamp)),
+            y: dataPoints.map(d => d.pressure),
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Pressure (hPa)',
+            line: { color: '#fbbf24', width: 2 },
+            marker: { color: '#fbbf24', size: 4 }
+        }
+    ];
+}
+
 async function fetchAndPlotData() {
     const containerId = 'plot';
     const statusEl = document.getElementById('tsfile-status');
     const statusText = document.getElementById('tsfile-status-text');
-    const layout = {
-        title: 'Local IoT Sensor Data',
-        xaxis: { title: 'Timestamp' },
-        yaxis: { title: 'Value' },
-        legend: { orientation: 'h' },
-    };
+    const layout = getDarkChartLayout('Local IoT Sensor Data');
+    
     try {
         const response = await fetch('/data', {
             headers: { Authorization: `Bearer ${currentToken}` },
@@ -144,47 +219,29 @@ async function fetchAndPlotData() {
         if (!result.exists) {
             statusText.textContent = "TSFile: Not found";
             Plotly.purge(containerId);
+            document.getElementById('metric-active-devices').textContent = 'None';
             return;
         }
         if (result.is_empty) {
             statusText.textContent = "TSFile: Empty";
             Plotly.purge(containerId);
+            document.getElementById('metric-active-devices').textContent = 'None';
             return;
         }
 
         statusText.textContent = `TSFile: Present (${result.data.length} records)`;
         updateTimestamp('tsfile-last-updated');
 
-        const plotData = [
-            {
-                x: result.data.map(d => new Date(d.timestamp)),
-                y: result.data.map(d => d.temperature),
-                type: 'scatter',
-                mode: 'lines+markers',
-                name: 'Temperature (°C)',
-            },
-            {
-                x: result.data.map(d => new Date(d.timestamp)),
-                y: result.data.map(d => d.humidity),
-                type: 'scatter',
-                mode: 'lines+markers',
-                name: 'Humidity (%)',
-            },
-            {
-                x: result.data.map(d => new Date(d.timestamp)),
-                y: result.data.map(d => d.pressure),
-                type: 'scatter',
-                mode: 'lines+markers',
-                name: 'Pressure (hPa)',
-            },
-        ];
+        const devices = [...new Set(result.data.map(d => d.device_id))];
+        document.getElementById('metric-active-devices').textContent = devices.join(', ') || 'None';
 
+        const plotData = getChartTraces(result.data);
         Plotly.newPlot(containerId, plotData, layout, { responsive: true });
         triggerPulse(statusEl);
     } catch (err) {
         showToast('Unable to load local chart data', 'error');
         if (statusText) statusText.textContent = "Failed to load TSFile data";
-        Plotly.newPlot(containerId, [], { ...layout, title: 'Local Data (Error Loading)' }, { responsive: true });
+        Plotly.newPlot(containerId, [], { ...layout, title: { text: 'Local Data (Error Loading)', font: { color: '#ef4444' } } }, { responsive: true });
     }
 }
 
@@ -192,12 +249,8 @@ async function fetchAndPlotIoTDB() {
     const containerId = 'plot-iotdb';
     const statusEl = document.getElementById('iotdb-status');
     const statusText = document.getElementById('iotdb-status-text');
-    const layout = {
-        title: 'IoTDB Timeseries Data',
-        xaxis: { title: 'Timestamp' },
-        yaxis: { title: 'Value' },
-        legend: { orientation: 'h' },
-    };
+    const layout = getDarkChartLayout('IoTDB Timeseries Data');
+    
     try {
         const response = await fetch('/iotdb/data', {
             headers: { Authorization: `Bearer ${currentToken}` },
@@ -209,42 +262,25 @@ async function fetchAndPlotIoTDB() {
         if (!response.ok) {
             const err = await response.json().catch(() => ({ detail: response.statusText }));
             showToast(`IoTDB: ${err.detail || response.statusText}`, 'error');
-            Plotly.newPlot(containerId, [], { ...layout, title: `IoTDB Data (Unavailable: ${response.status})` }, { responsive: true });
+            Plotly.newPlot(containerId, [], { ...layout, title: { text: `IoTDB Data (Unavailable: ${response.status})`, font: { color: '#ef4444' } } }, { responsive: true });
+            document.getElementById('metric-iotdb-status').textContent = 'Disconnected';
+            if (statusText) statusText.textContent = "IoTDB Status: Disconnected";
             return;
         }
         const data = await response.json();
-        const plotData = [
-            {
-                x: data.data.map(d => new Date(d.timestamp)),
-                y: data.data.map(d => d.temperature),
-                type: 'scatter',
-                mode: 'lines+markers',
-                name: 'Temperature (°C)',
-            },
-            {
-                x: data.data.map(d => new Date(d.timestamp)),
-                y: data.data.map(d => d.humidity),
-                type: 'scatter',
-                mode: 'lines+markers',
-                name: 'Humidity (%)',
-            },
-            {
-                x: data.data.map(d => new Date(d.timestamp)),
-                y: data.data.map(d => d.pressure),
-                type: 'scatter',
-                mode: 'lines+markers',
-                name: 'Pressure (hPa)',
-            },
-        ];
+        const plotData = getChartTraces(data.data);
 
         Plotly.newPlot(containerId, plotData, layout, { responsive: true });
         if (statusText) statusText.textContent = "IoTDB Status: Connected";
+        document.getElementById('metric-iotdb-status').textContent = 'Connected';
+        
         if (statusEl) triggerPulse(statusEl);
         triggerPulse(document.getElementById(containerId));
         updateTimestamp('iotdb-last-updated');
     } catch (err) {
         showToast('Unable to load IoTDB chart data', 'error');
-        Plotly.newPlot(containerId, [], { ...layout, title: 'IoTDB Data (Connection Error)' }, { responsive: true });
+        Plotly.newPlot(containerId, [], { ...layout, title: { text: 'IoTDB Data (Connection Error)', font: { color: '#ef4444' } } }, { responsive: true });
+        document.getElementById('metric-iotdb-status').textContent = 'Disconnected';
     }
 }
 
@@ -287,8 +323,10 @@ function subscribeToSyncStatus(jobId) {
         const payload = JSON.parse(event.data || '{}');
         syncStatus.textContent = `Status: ${payload.status}`;
         syncProgress.textContent = payload.progress !== undefined ? `Progress: ${payload.progress}% (${payload.processed_records}/${payload.total_records})` : '';
+        
         if (payload.status === 'completed') {
             showToast('Sync completed successfully', 'success');
+            document.getElementById('metric-last-sync').textContent = new Date().toLocaleTimeString();
             updateBufferStatus();
             fetchAndPlotData();
             fetchAndPlotIoTDB();
@@ -298,6 +336,7 @@ function subscribeToSyncStatus(jobId) {
         }
         if (payload.status === 'failed') {
             showToast('Sync failed', 'error');
+            document.getElementById('metric-last-sync').textContent = `Failed (${new Date().toLocaleTimeString()})`;
             errorLog.classList.remove('hidden');
             errorLog.textContent = payload.errors ? payload.errors.join('\n') : 'Unknown error';
             eventSource.close();
@@ -307,7 +346,7 @@ function subscribeToSyncStatus(jobId) {
         syncProgress.textContent = 'Connection lost, retrying...';
     };
 }
-
+// Event Listeners
 document.getElementById('login-button').addEventListener('click', login);
 document.getElementById('sync-button').addEventListener('click', triggerSync);
 document.getElementById('retry-button').addEventListener('click', triggerSync);
@@ -316,4 +355,5 @@ if (currentToken) {
     showDashboard();
 } else {
     showLogin();
+}
 }
