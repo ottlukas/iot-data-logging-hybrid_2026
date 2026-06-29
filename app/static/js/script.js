@@ -13,6 +13,7 @@ let lastJobId = null;
 let refreshInterval = null;
 const REFRESH_SECONDS = 5;
 let secondsRemaining = REFRESH_SECONDS;
+let syncInProgress = false;
 
 function triggerPulse(el) {
     if (!el) return;
@@ -47,6 +48,7 @@ function startAutoreload() {
                 fetchAndPlotData();
                 fetchAndPlotIoTDB();
                 updateBufferStatus();
+                updateSyncButtonState();
                 secondsRemaining = REFRESH_SECONDS;
             }
             updateCountdownUI();
@@ -68,6 +70,7 @@ function showDashboard() {
     updateBufferStatus();
     fetchAndPlotData();
     fetchAndPlotIoTDB();
+    updateSyncButtonState();
     startAutoreload();
 }
 
@@ -79,7 +82,7 @@ async function updateBufferStatus() {
         if (response.ok) {
             const data = await response.json();
             if (data.exists) {
-                bufferText.textContent = `Local TSfile: ${data.filename} (${data.size_kb} KB)`;
+                bufferText.textContent = `Local TSfile: ${data.filename} (${data.size_kb} KB, ${data.record_count || '?'} records)`;
                 bufferInfo.classList.add('active');
                 const dot = bufferInfo.querySelector('.status-dot');
                 if (dot) {
@@ -87,7 +90,7 @@ async function updateBufferStatus() {
                     triggerPulse(dot);
                 }
                 updateTimestamp('buffer-last-updated');
-                document.getElementById('metric-buffer-status').textContent = `Active (${data.size_kb} KB)`;
+                document.getElementById('metric-buffer-status').textContent = `Active (${data.size_kb} KB, ${data.record_count || '?'} records)`;
             } else {
                 bufferText.textContent = 'No local TSfile found (Buffer is empty)';
                 bufferInfo.classList.remove('active');
@@ -95,6 +98,9 @@ async function updateBufferStatus() {
                 if (dot) dot.classList.remove('error-dot');
                 document.getElementById('metric-buffer-status').textContent = 'Empty';
             }
+            
+            // Update sync status display
+            updateSyncStatusDisplay(data);
         }
     } catch (err) {
         bufferText.textContent = 'Buffer status unavailable';
@@ -102,6 +108,109 @@ async function updateBufferStatus() {
         const dot = bufferInfo.querySelector('.status-dot');
         if (dot) dot.classList.add('error-dot');
     }
+}
+
+function updateSyncStatusDisplay(statusData) {
+    const syncStatusEl = document.getElementById('sync-status');
+    const syncProgressEl = document.getElementById('sync-progress');
+    const bufferStatusEl = document.getElementById('buffer-text');
+    
+    if (!syncStatusEl) return;
+    
+    // Map sync_status to display text
+    const statusMap = {
+        'idle_no_file': 'No local TSFile',
+        'ready': 'Ready to sync',
+        'sync_running': 'Sync running',
+        'sync_success_archived': 'Sync successful — local TSFile archived',
+        'sync_failed_retained': 'Sync failed — local TSFile retained',
+        'sync_success_archive_failed': 'Sync successful but archiving failed'
+    };
+    
+    const displayText = statusMap[statusData.sync_status] || statusData.sync_status;
+    
+    // Update the sync status display
+    if (statusData.sync_running) {
+        syncStatusEl.textContent = 'Status: Sync in progress...';
+        syncProgressEl.textContent = 'Please wait';
+    } else if (statusData.sync_status === 'sync_success_archived') {
+        syncStatusEl.textContent = 'Status: ' + displayText;
+        syncProgressEl.textContent = '';
+    } else if (statusData.sync_status === 'sync_failed_retained') {
+        syncStatusEl.textContent = 'Status: ' + displayText;
+        syncProgressEl.textContent = 'You can retry the sync';
+    } else if (statusData.sync_status === 'sync_success_archive_failed') {
+        syncStatusEl.textContent = 'Status: ' + displayText;
+        syncProgressEl.textContent = 'Warning: File cleanup failed';
+    } else if (statusData.sync_status === 'ready') {
+        syncStatusEl.textContent = 'Status: ' + displayText;
+        syncProgressEl.textContent = '';
+    } else {
+        syncStatusEl.textContent = 'Status: ' + displayText;
+        syncProgressEl.textContent = '';
+    }
+    
+    // Update metric last sync
+    const metricLastSync = document.getElementById('metric-last-sync');
+    if (metricLastSync) {
+        if (statusData.sync_status === 'sync_success_archived') {
+            metricLastSync.textContent = `Successful (${new Date().toLocaleTimeString()})`;
+        } else if (statusData.sync_status === 'sync_failed_retained') {
+            metricLastSync.textContent = `Failed (${new Date().toLocaleTimeString()})`;
+        } else if (statusData.sync_status === 'sync_running') {
+            metricLastSync.textContent = 'Running...';
+        } else if (statusData.sync_status === 'sync_success_archive_failed') {
+            metricLastSync.textContent = `Success (cleanup failed) (${new Date().toLocaleTimeString()})`;
+        }
+    }
+}
+
+function updateSyncButtonState() {
+    const syncButton = document.getElementById('sync-button');
+    const retryButton = document.getElementById('retry-button');
+    
+    if (!syncButton) return;
+    
+    // Check buffer status and sync state
+    fetch('/buffer/status', {
+        headers: { Authorization: `Bearer ${currentToken}` }
+    }).then(response => {
+        if (response.ok) {
+            return response.json();
+        }
+        throw new Error('Failed to get buffer status');
+    }).then(data => {
+        const hasFile = data.exists && data.record_count > 0;
+        const isSyncRunning = data.sync_running || syncInProgress;
+        
+        // Enable/disable sync button
+        if (hasFile && !isSyncRunning) {
+            syncButton.disabled = false;
+            syncButton.textContent = 'Sync to IoTDB';
+            syncButton.classList.remove('disabled');
+        } else if (isSyncRunning) {
+            syncButton.disabled = true;
+            syncButton.textContent = 'Sync in Progress...';
+            syncButton.classList.add('disabled');
+        } else {
+            syncButton.disabled = true;
+            syncButton.textContent = 'Sync to IoTDB';
+            syncButton.classList.add('disabled');
+        }
+        
+        // Update retry button
+        if (retryButton) {
+            if (data.sync_status === 'sync_failed_retained' && !isSyncRunning) {
+                retryButton.classList.remove('hidden');
+            } else {
+                retryButton.classList.add('hidden');
+            }
+        }
+    }).catch(err => {
+        console.error('Error updating sync button state:', err);
+        syncButton.disabled = true;
+        syncButton.textContent = 'Sync to IoTDB';
+    });
 }
 
 function showLogin() {
@@ -309,6 +418,37 @@ async function triggerSync() {
         return;
     }
 
+    // Check if sync is already in progress
+    if (syncInProgress) {
+        showToast('Sync is already in progress. Please wait.', 'warning');
+        return;
+    }
+
+    // Check buffer status first
+    try {
+        const bufferResponse = await fetch('/buffer/status', {
+            headers: { Authorization: `Bearer ${currentToken}` }
+        });
+        
+        if (bufferResponse.ok) {
+            const bufferData = await bufferResponse.json();
+            if (!bufferData.exists || bufferData.record_count === 0) {
+                showToast('No data to sync. Please ingest some data first.', 'warning');
+                return;
+            }
+            if (bufferData.sync_running) {
+                showToast('Sync is already in progress. Please wait.', 'warning');
+                return;
+            }
+        }
+    } catch (err) {
+        showToast('Unable to check buffer status', 'error');
+        return;
+    }
+
+    syncInProgress = true;
+    updateSyncButtonState();
+
     try {
         const response = await fetch('/sync', {
             method: 'POST',
@@ -317,11 +457,31 @@ async function triggerSync() {
                 Authorization: `Bearer ${currentToken}`,
             },
         });
+        
+        if (response.status === 409) {
+            // Conflict - sync already in progress
+            showToast('Sync is already in progress. Please wait.', 'warning');
+            syncInProgress = false;
+            updateSyncButtonState();
+            return;
+        }
+        
+        if (response.status === 400) {
+            const result = await response.json();
+            showToast(result.detail || 'No data to sync', 'warning');
+            syncInProgress = false;
+            updateSyncButtonState();
+            return;
+        }
+        
         if (!response.ok) {
             const result = await response.json();
             showToast(result.detail || 'Sync request failed', 'error');
+            syncInProgress = false;
+            updateSyncButtonState();
             return;
         }
+        
         const result = await response.json();
         lastJobId = result.job_id;
         syncStatus.textContent = `Sync requested: ${result.status}`;
@@ -330,6 +490,8 @@ async function triggerSync() {
         subscribeToSyncStatus(lastJobId);
     } catch (err) {
         showToast('Unable to start sync', 'error');
+        syncInProgress = false;
+        updateSyncButtonState();
     }
 }
 
@@ -344,25 +506,32 @@ function subscribeToSyncStatus(jobId) {
         syncProgress.textContent = payload.progress !== undefined ? `Progress: ${payload.progress}% (${payload.processed_records}/${payload.total_records})` : '';
         
         if (payload.status === 'completed') {
+            syncInProgress = false;
             showToast('Sync completed successfully', 'success');
             document.getElementById('metric-last-sync').textContent = new Date().toLocaleTimeString();
             updateBufferStatus();
             fetchAndPlotData();
             fetchAndPlotIoTDB();
+            updateSyncButtonState();
             secondsRemaining = REFRESH_SECONDS;
             updateCountdownUI();
             eventSource.close();
         }
         if (payload.status === 'failed') {
+            syncInProgress = false;
             showToast('Sync failed', 'error');
             document.getElementById('metric-last-sync').textContent = `Failed (${new Date().toLocaleTimeString()})`;
             errorLog.classList.remove('hidden');
             errorLog.textContent = payload.errors ? payload.errors.join('\n') : 'Unknown error';
+            updateBufferStatus();
+            updateSyncButtonState();
             eventSource.close();
         }
     };
     eventSource.onerror = () => {
         syncProgress.textContent = 'Connection lost, retrying...';
+        syncInProgress = false;
+        updateSyncButtonState();
     };
 }
 

@@ -6,24 +6,25 @@ A robust, local-first time-series data management system featuring a FastAPI bac
 
 1.  **Ingestion**: Sensors send JSON data to the `/ingest` endpoint.
 2.  **Local Buffering**: Data is immediately appended to a local line-delimited JSON "TSFile" for offline resilience.
-3.  **Sync Manager**: A background process (or manual trigger) reads the local buffer in batches and pushes it to **Apache IoTDB**.
+3.  **Sync Manager**: **Manual trigger only** - A sync job reads the local buffer and pushes it to **Apache IoTDB** only when the user explicitly presses the "Sync to IoTDB" button or calls the `/sync` endpoint.
 4.  **Visualization**: A dual-chart dashboard compares real-time local data with synchronized historical data from IoTDB.
 
 ## Features
 
--   ** Secure Access**: JWT-based authentication for ingestion, synchronization, and dashboard access.
--   ** Dual-Chart Dashboard**: Side-by-side Plotly visualizations showing "Local Buffer" vs. "IoTDB Cloud" datasets.
--   ** Real-time Updates**: 
+-   **Secure Access**: JWT-based authentication for ingestion, synchronization, and dashboard access.
+-   **Dual-Chart Dashboard**: Side-by-side Plotly visualizations showing "Local Buffer" vs. "IoTDB Cloud" datasets.
+-   **Real-time Updates**: 
     -   5-second auto-refresh with a visual countdown timer.
     -   Visual "pulse" indicators on status bars when data updates successfully.
--   ** Resilient Sync**: 
-    -   Asynchronous batch processing with offset tracking.
+-   **Manual-Only Sync**: 
+    -   **No automatic background sync** - synchronization only starts when user explicitly triggers it via the dashboard button or `/sync` endpoint.
     -   Server-Sent Events (SSE) for live progress reporting (0-100%).
-    -   Automatic file archiving after successful synchronization.
--   ** Reliability**: 
+    -   **Automatic file deletion after successful sync** - TSFile is archived only after all records are verified as successfully written to IoTDB.
+-   **Reliability**: 
     -   Idempotent sync logic (resumes from last successful offset).
     -   Rate-limiting on sync triggers to prevent system abuse.
     -   Graceful error handling for offline IoTDB instances.
+    -   **TSFile retention on failure** - If sync fails for any reason, the TSFile is retained for retry.
 
 ##  Windows and Linux Setup
 
@@ -130,7 +131,7 @@ The application can be configured using environment variables. Paths are normali
 | `IOTDB_CONNECT_RETRIES` | Max connection retry attempts for IoTDB | `6` |
 | `IOTDB_CONNECT_BACKOFF_SECONDS` | Delay between connection retry attempts | `2.0` |
 | `BATCH_SIZE` | Sync batch size | `20` |
-| `SYNC_INTERVAL` | Time in seconds between sync scans | `30` |
+| `SYNC_INTERVAL` | Time in seconds between sync scans (deprecated - sync is manual-only) | `30` |
 | `SYNC_RATE_LIMIT` | Maximum sync triggers allowed in window | `3` |
 | `SYNC_RATE_WINDOW` | Time window in seconds for rate limiting | `60` |
 | `JWT_SECRET_KEY` | Secret key for signing access tokens | `change-me-super-secret` |
@@ -175,12 +176,46 @@ The application can be configured using environment variables. Paths are normali
 | `/ingest` | POST | Append sensor reading to local buffer. |
 | `/data` | GET | Retrieve recent records from local TSFile. |
 | `/iotdb/data`| GET | Query timeseries data from Apache IoTDB. |
-| `/sync` | POST | Trigger manual background sync job. |
-| `/buffer/status`| GET | Check existence and size of local buffer file. |
+| `/sync` | POST | **Manual trigger only** - Start synchronization of local TSFile to IoTDB. |
+| `/sync/status` | GET | Get current overall sync status. |
+| `/sync/status/{job_id}` | GET | Get status of a specific sync job via SSE. |
+| `/buffer/status`| GET | Check existence, size, and sync readiness of local buffer file. |
 
 ## Buffering and Sync
 
-Sensor readings are buffered locally in `data/tsfiles/buffer_current.tsfile` and tracked in `data/tsfiles/index.json`.
+### Key Behavior Changes (Manual-Only Sync with Delete-After-Success)
+
+**Important**: The synchronization behavior has been updated to be **manual-only** with **automatic deletion after successful sync**:
+
+1. **Manual-Only Synchronization**: 
+   - Synchronization to Apache IoTDB **only starts** when the user explicitly presses the "Sync to IoTDB" button on the dashboard or calls the `/sync` endpoint.
+   - No automatic background synchronization occurs.
+   - The `/buffer/status` endpoint continues to run for **awareness/detection only** - it never writes to IoTDB.
+
+2. **TSFile Lifecycle**:
+   - **Before Sync**: TSFile exists at `data/tsfiles/buffer_current.tsfile` with buffered sensor data.
+   - **During Sync**: TSFile is being read and data is written to IoTDB. TSFile is locked and cannot be modified.
+   - **After Successful Sync**: TSFile is **deleted** automatically once all records are verified as successfully written to IoTDB.
+   - **After Failed Sync**: TSFile is **retained** and remains available for retry. The sync can be retried manually.
+
+3. **Sync Status States**:
+   - `idle_no_file`: No TSFile exists
+   - `ready`: TSFile exists with data, ready for manual sync
+   - `sync_running`: Sync is in progress
+   - `sync_success_archived`: Sync completed successfully, TSFile archived
+   - `sync_failed_retained`: Sync failed, TSFile retained for retry
+   - `sync_success_archive_failed`: Sync succeeded but TSFile archiving failed (warning state)
+
+4. **Duplicate Sync Prevention**:
+   - Only one sync job can run at a time.
+   - Attempting to start a sync while one is already running will be rejected with a 409 Conflict error.
+   - The dashboard sync button is disabled while a sync is in progress.
+
+5. **Reliability Guarantees**:
+   - TSFile is **never deleted** unless sync completes successfully
+   - TSFile is **always retained** on any failure (connection error, write error, partial success, etc.)
+   - Index/offset state is updated consistently to support idempotent retries
+   - Application restart does not cause incorrect deletion or resync
 
 ### Simulate Ingestion
 Use the provided CLI tool to generate test data:
@@ -193,7 +228,27 @@ python3 ingest_sensor_data.py --random --count 5 --username operator --password 
 
 ### Trigger sync
 
-Click the `Sync to IoTDB` button on the dashboard. The button sends an authenticated request to `/sync` and opens a live sync status stream.
+Click the `Sync to IoTDB` button on the dashboard. The button:
+- Is **only enabled** when a TSFile exists with data and no sync is currently running
+- Sends an authenticated request to `/sync`
+- Opens a live sync status stream via Server-Sent Events
+- Shows progress updates in real-time
+- Displays final status (success with deletion, or failure with retention)
+
+## Logging
+
+The system provides structured logging for all sync lifecycle events:
+
+- `TSFile detected at <path> with <N> records. Manual sync requested (job: <job_id>)`
+- `Sync job <job_id> started. Processing TSFile: <filename>`
+- `Sync job <job_id>: Batch <N> processed successfully. <M>/<Total> records written.`
+- `Sync job <job_id>: All <N> records successfully written to IoTDB. Verifying completion.`
+- `Sync job <job_id>: TSFile <filename> deleted successfully after sync.`
+- `Sync job <job_id> failed: <error>`
+- `Sync job <job_id>: TSFile retained after failure.`
+- `Sync job <job_id>: IoTDB sync succeeded but TSFile archiving failed: <error>. TSFile retained at <path>.`
+
+No sensitive credentials or tokens are logged.
 
 ## Notes
 

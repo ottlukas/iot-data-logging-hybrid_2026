@@ -24,3 +24,12 @@ async def get_data(user=Depends(get_current_user)):
         "is_empty": len(data) == 0,
         "data": [d.model_dump() for d in data]
     }
+
+@router.get("/sync/status")
+async def get_sync_status(user=Depends(get_current_user)):
+    """
+    Get current sync status for the dashboard.
+    """
+    # This will be handled by the main app's /sync/status endpoint
+    # This is just a convenience wrapper
+    return {"message": "Use /sync/status endpoint"}

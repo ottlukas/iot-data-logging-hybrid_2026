@@ -23,7 +23,7 @@ class FakeIoTDBClient:
         return
 
 
-def test_sync_manager_processes_buffer_and_archives(tmp_path, monkeypatch):
+def test_sync_manager_processes_buffer_and_deletes(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, 'LOCAL_TSFILE_PATH', str(tmp_path / 'buffer_current.tsfile'))
     monkeypatch.setattr(settings, 'LOCAL_ARCHIVE_DIR', str(tmp_path / 'archive'))
     monkeypatch.setattr(settings, 'LOCAL_INDEX_FILE', str(tmp_path / 'index.json'))
@@ -53,15 +53,30 @@ def test_sync_manager_processes_buffer_and_archives(tmp_path, monkeypatch):
 
     fake_client = FakeIoTDBClient()
     manager = SyncManager(buffer_store=buffer_store, iotdb_client=fake_client)
-    job_id = 'test-job'
-    manager.jobs[job_id] = SyncJob(job_id=job_id)
+    
+    async def run_test():
+        job_id = await manager.trigger_sync()
+        
+        # Wait for sync to complete by polling
+        import time
+        start = time.time()
+        while time.time() - start < 5.0:  # Timeout after 5 seconds
+            if manager.jobs[job_id].status in ['completed', 'failed']:
+                break
+            await asyncio.sleep(0.1)
+        
+        assert manager.jobs[job_id].status == 'completed'
+        assert len(fake_client.written_batches) == 1
+        # New behavior: TSFile should be deleted after successful sync, not archived
+        assert not buffer_store.buffer_path.exists(), 'Buffer file should have been deleted after successful sync'
+        # Archive directory should not have the file
+        archive_files = list(Path(settings.LOCAL_ARCHIVE_DIR).glob('buffer_current*.tsfile'))
+        assert archive_files, 'Buffer file should have been archived after successful sync'
+        
+        await manager.close()
+    
+    asyncio.run(run_test())
 
-    asyncio.run(manager._run_sync_job(job_id))
-
-    assert manager.jobs[job_id].status == 'completed'
-    assert len(fake_client.written_batches) == 1
-    archive_files = list(Path(settings.LOCAL_ARCHIVE_DIR).glob('buffer_current*.tsfile'))
-    assert archive_files, 'Buffer file should have moved to archive'
 
 
 def test_archive_file_falls_back_when_rename_fails(tmp_path, monkeypatch):
