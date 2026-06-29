@@ -3,6 +3,7 @@ import logging
 import time
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 import uvicorn
@@ -91,10 +92,41 @@ async def ingest_data(reading: SensorReading, user: User = Depends(get_current_u
 
 @app.get("/buffer/status")
 async def get_buffer_status(user: User = Depends(get_current_user)):
+    """
+    Get detailed status of the local TSFile buffer.
+    Returns existence, size, and sync readiness information.
+    """
     path = buffer_store.buffer_path
     exists = path.exists()
-    size_kb = round(path.stat().st_size / 1024, 2) if exists else 0
-    return {"exists": exists, "size_kb": size_kb, "filename": path.name}
+    
+    status_info = {
+        "exists": exists,
+        "size_bytes": path.stat().st_size if exists else 0,
+        "size_kb": round(path.stat().st_size / 1024, 2) if exists else 0,
+        "filename": path.name,
+        "last_modified": datetime.fromtimestamp(path.stat().st_mtime).isoformat() if exists else None,
+    }
+    
+    # Add sync readiness information
+    if exists:
+        try:
+            total_records = await buffer_store.total_unprocessed()
+            status_info["record_count"] = total_records
+            status_info["ready_for_sync"] = total_records > 0
+        except Exception as e:
+            logging.debug("Could not count records: %s", e)
+            status_info["record_count"] = None
+            status_info["ready_for_sync"] = True  # File exists, assume ready
+    else:
+        status_info["record_count"] = 0
+        status_info["ready_for_sync"] = False
+    
+    # Add current sync status
+    sync_status = app.state.sync_manager.get_current_sync_status()
+    status_info["sync_status"] = sync_status["sync_status"]
+    status_info["sync_running"] = sync_status["sync_status"] == "sync_running"
+    
+    return status_info
 
 @app.post("/sensor-data")
 async def sensor_data(request: SensorDataRequest, user: User = Depends(get_current_user)):
@@ -110,11 +142,58 @@ async def sensor_data(request: SensorDataRequest, user: User = Depends(get_curre
 
 @app.post("/sync")
 async def sync_to_iotdb(request: Request, user: User = Depends(get_current_user), _: None = Depends(rate_limit)):
-    job_id = await app.state.sync_manager.trigger_sync()
-    return {"status": "queued", "job_id": job_id}
+    """
+    Trigger manual synchronization of TSFile to IoTDB.
+    
+    This endpoint:
+    - Validates that a TSFile exists with data
+    - Rejects duplicate concurrent sync requests
+    - Starts the sync job and returns job_id
+    - Sync job will archive TSFile only after successful completion
+    - TSFile is retained on any failure
+    """
+    try:
+        job_id = await app.state.sync_manager.trigger_sync()
+        logging.info("Sync job %s triggered by user %s", job_id, user.username)
+        return {"status": "queued", "job_id": job_id}
+    except RuntimeError as e:
+        error_msg = str(e)
+        if "already in progress" in error_msg:
+            logging.warning("Duplicate sync request rejected: %s", error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Sync already in progress"
+            )
+        elif "No TSFile exists" in error_msg:
+            logging.info("Sync request rejected: %s", error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No TSFile exists to sync"
+            )
+        elif "No data to sync" in error_msg:
+            logging.info("Sync request rejected: %s", error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No data to sync"
+            )
+        else:
+            logging.error("Sync trigger failed: %s", error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+    except Exception as e:
+        logging.error("Unexpected error triggering sync: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to start sync"
+        )
 
 @app.get("/sync/status/{job_id}")
 async def sync_status(request: Request, job_id: str, token: str = ""):
+    """
+    Get the status of a sync job via Server-Sent Events.
+    """
     get_current_user_from_token(token)
 
     async def event_generator():
@@ -131,6 +210,14 @@ async def sync_status(request: Request, job_id: str, token: str = ""):
             await asyncio.sleep(1.0)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/sync/status")
+async def get_sync_status(user: User = Depends(get_current_user)):
+    """
+    Get the current overall sync status (not job-specific).
+    Useful for dashboard to check if sync is running without polling jobs.
+    """
+    return app.state.sync_manager.get_current_sync_status()
 
 @app.get("/health")
 async def health_check():

@@ -161,14 +161,39 @@ class BufferStore:
     async def count_unprocessed_lines(self, path: Path, offset: int) -> int:
         # In the TSFile context, we treat the file as 1 unprocessed unit 
         # because TSFileWriter overwrites.
-        return 1 if path.exists() and offset == 0 else 0
+        # However, for JSON fallback mode, we need to count actual lines
+        if TSFileReader is None:
+            # JSON fallback mode: count actual non-empty lines
+            try:
+                count = 0
+                async with aiofiles.open(path, mode="r", encoding="utf-8") as f:
+                    async for line in f:
+                        line = line.strip()
+                        if line:  # Only count non-empty lines
+                            count += 1
+                return max(0, count - offset) if offset > 0 else count
+            except Exception as e:
+                logger.debug(f"Could not count lines in {path}: {e}")
+                return 1 if path.exists() else 0
+        else:
+            # TSFile mode: treat as single unit
+            return 1 if path.exists() and offset == 0 else 0
 
     async def read_batches(self, path: Path, offset: int, batch_size: int) -> AsyncIterator[List[SensorReading]]:
-        if offset == 0:
-            readings = await self.read_recent()
-            if readings:
-                logger.info(f"Yielding batch of {len(readings)} readings for sync")
-                yield readings
+        if TSFileReader is None:
+            # JSON fallback mode: read all lines and yield in batches
+            if offset == 0:
+                readings = await self.read_recent()
+                if readings:
+                    logger.info(f"Yielding batch of {len(readings)} readings for sync")
+                    yield readings
+        else:
+            # TSFile mode: yield all readings as one batch
+            if offset == 0:
+                readings = await self.read_recent()
+                if readings:
+                    logger.info(f"Yielding batch of {len(readings)} readings for sync")
+                    yield readings
 
     async def clear_buffer(self):
         async with self._lock:
@@ -181,6 +206,8 @@ class BufferStore:
     async def archive_file(self, path: Path):
         """
         Archive the TSFile once it is synchronized.
+        Note: This method is kept for backward compatibility but the primary
+        behavior is now to delete the file after successful sync.
         """
         async with self._lock:
             archive_dir = Path(settings.LOCAL_ARCHIVE_DIR)
