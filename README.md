@@ -202,3 +202,64 @@ Click the `Sync to IoTDB` button on the dashboard. The button sends an authentic
 - The ingestion helper authenticates with `/token` and sends buffered readings to `/ingest`.
 
 ---
+
+## 🗃️ IoTDB CLI Data Deletion Guide
+
+This section explains how to **list, delete, and verify** data in Apache IoTDB using the CLI.
+
+---
+
+### **1. List All Time Series**
+To list all time series in IoTDB, run:
+```sql
+SHOW TIMESERIES
+```
+
+To list time series under a specific path (e.g., root.factory):
+```sql
+SHOW TIMESERIES root.factory.*
+```
+
+---
+
+### **2. Delete Data from IoTDB**
+IoTDB does not support recursive wildcards in DELETE statements. You must delete each time series individually.
+
+#### Delete All Data from a Specific Time Series
+```sql
+DELETE FROM root.factory.line1.temperature;
+DELETE FROM root.factory.line1.humidity;
+DELETE FROM root.factory.line1.pressure;
+```
+
+#### Delete Data in a Time Range
+To delete data within a specific time range (e.g., all data before 2026-06-27):
+```sql
+DELETE FROM root.factory.line1.temperature WHERE time < 2026-06-27T00:00:00.000Z;
+```
+
+#### Delete an Entire Storage Group (Permanent!)
+To completely remove a storage group and all its data:
+```sql
+DELETE STORAGE GROUP root.factory;
+```
+
+⚠️ **Warning**: This action is irreversible and will delete all time series under the storage group.
+
+---
+
+### **3. Verify Deletion**
+After deleting, verify that the data is gone by running:
+```sql
+SELECT * FROM root.factory.*;
+```
+
+If the query returns no results, the deletion was successful.
+
+---
+
+### **4. Common Pitfalls**
+
+- **Wildcards in DELETE**: `DELETE FROM root.factory.*` does not work as expected. IoTDB does not recursively resolve wildcards for deletion. You must delete each time series individually.
+- **Permissions**: Ensure your user has the necessary permissions to delete data.
+- **Backup**: Always back up important data before deletion.
