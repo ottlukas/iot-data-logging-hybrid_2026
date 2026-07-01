@@ -2,9 +2,9 @@ name: Python application
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feat/** ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, feat/** ]
 
 jobs:
   test:
@@ -23,7 +23,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install --prefer-binary -r requirements.txt httpx pytest-asyncio
+        pip install --prefer-binary -r requirements.txt httpx
     - name: Run tests
       run: |
         python -m pytest
